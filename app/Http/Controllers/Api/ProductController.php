@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
 use App\Models\Product;
+use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
@@ -14,11 +15,61 @@ class ProductController extends Controller
     /**
      * Menampilkan semua produk.
      */
-    public function index()
+
+    /**
+     * Menampilkan produk dengan Pagination dan Filter.
+     */
+    public function index(Request $request)
     {
-        $products = Product::with('category')->paginate(10);
+        // Validasi parameter
+        $request->validate([
+            'limit' => 'nullable|integer|min:1|max:100',
+            'category_id' => 'nullable|exists:categories,category_id',
+            'keyword' => 'nullable|string',
+        ]);
+
+        // Mengambil jumlah produk per halaman
+        $limit = $request->query('limit', 10);
+
+        // Query produk
+        $query = Product::with('category');
+
+        // Filter berdasarkan kategori
+        if ($request->filled('category_id')) {
+            $query->where('category_id', $request->category_id);
+        }
+
+        // Pencarian berdasarkan nama produk
+        if ($request->filled('keyword')) {
+            $query->where('name', 'like', '%' . $request->keyword . '%');
+        }
+
+        // Pagination
+        $products = $query->paginate($limit)->appends($request->query());
 
         return ProductResource::collection($products);
+    }
+
+    /**
+     * Menampilkan statistik keseluruhan produk dan kategori.
+     */
+    public function stats()
+    {
+        // Menghitung jumlah seluruh produk di database
+        $totalProducts = Product::count();
+
+        // Menjumlahkan seluruh stok dari semua produk
+        $totalStock = Product::sum('stock');
+
+        // Menghitung jumlah seluruh kategori di database
+        $totalCategories = Category::count();
+
+        // Mengembalikan hasil statistik dalam format JSON
+        return response()->json([
+            'total_products' => $totalProducts,
+            'total_stock' => $totalStock,
+            'total_categories' => $totalCategories,
+        ]);
     }
 
     /**
@@ -112,16 +163,22 @@ class ProductController extends Controller
     {
         $product = Product::find($id);
 
-        if ($product != null) {
-            $product->delete();
-
+        if ($product == null) {
             return response()->json([
-                'message' => 'Product deleted successfully',
-            ]);
+                'message' => 'Product not found'
+            ], 404);
         }
 
+        // Menghapus file gambar dari penyimpanan
+        if ($product->img) {
+            Storage::disk('public')->delete($product->img);
+        }
+
+        // Menghapus data produk dari database
+        $product->delete();
+
         return response()->json([
-            'message' => 'Product not found',
-        ], 404);
+            'message' => 'Product deleted successfully'
+        ]);
     }
 }
